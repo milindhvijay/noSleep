@@ -1,0 +1,18 @@
+# Ignore compiled binary
+noSleep
+
+# macOS
+.DS_Store
+
+# Build artifacts
+*.o
+*.swp
+
+# Xcode
+*.xcodeproj
+*.xcworkspace
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
