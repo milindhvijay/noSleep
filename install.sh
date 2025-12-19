@@ -48,7 +48,7 @@ EOF
 if [[ ":$PATH:" != *":$HOME/bin:"* ]]; then
     echo ""
     echo "Note: ~/bin is not in your PATH."
-    echo "Add this to your ~/.zshrc or ~/.bashrc:"
+    echo "Add this to your ~/.zshrc:"
     echo '  export PATH="$HOME/bin:$PATH"'
 fi
 
