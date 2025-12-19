@@ -1,5 +1,5 @@
 # Ignore compiled binary
-noSleep
+/noSleep
 
 # macOS
 .DS_Store
