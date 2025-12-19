@@ -156,5 +156,7 @@ func cmdUninstall() {
     }
     
     try? FileManager.default.removeItem(atPath: LOCKFILE)
+    try? FileManager.default.removeItem(atPath: "/tmp/noSleep.log")
+    try? FileManager.default.removeItem(atPath: "/tmp/noSleep.err")
     print("[noSleep] Uninstall complete")
 }
