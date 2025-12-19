@@ -155,8 +155,17 @@ func cmdUninstall() {
         }
     }
     
-    try? FileManager.default.removeItem(atPath: LOCKFILE)
-    try? FileManager.default.removeItem(atPath: "/tmp/noSleep.log")
-    try? FileManager.default.removeItem(atPath: "/tmp/noSleep.err")
+    if FileManager.default.fileExists(atPath: LOCKFILE) {
+        try? FileManager.default.removeItem(atPath: LOCKFILE)
+        print("   Removed: \(LOCKFILE)")
+    }
+    if FileManager.default.fileExists(atPath: "/tmp/noSleep.log") {
+        try? FileManager.default.removeItem(atPath: "/tmp/noSleep.log")
+        print("   Removed: /tmp/noSleep.log")
+    }
+    if FileManager.default.fileExists(atPath: "/tmp/noSleep.err") {
+        try? FileManager.default.removeItem(atPath: "/tmp/noSleep.err")
+        print("   Removed: /tmp/noSleep.err")
+    }
     print("[noSleep] Uninstall complete")
 }
