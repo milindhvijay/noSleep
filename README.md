@@ -1,6 +1,8 @@
 # noSleep
 
-> Prevent macOS sleep when lid is closed on AC power. Event-driven daemon using native IOKit APIs.
+> Prevents macOS from sleepung when lid is closed, but AC power is enabled. Event-driven daemon using native IOKit APIs.
+> 
+> Tested on MBP M2 and M5 chips, on macOS 26.2
 
 [![Swift](https://img.shields.io/badge/Swift-orange.svg)](https://swift.org)
 [![Platform](https://img.shields.io/badge/platform-macOS-lightgrey.svg)](https://developer.apple.com/macos/)
@@ -18,8 +20,11 @@
 | Condition | Sleep |
 |-----------|-------|
 | AC + Lid Closed | ❌ Prevented |
-| AC + Lid Open | ✅ Allowed |
-| Battery + Any | ✅ Allowed |
+| AC + Lid Open | ✅ Allowed (Apple's system default behaviour) |
+| Battery + Any | ✅ Allowed (Apple's system default behaviour) |
+
+## Not yet tested/verified
+Behavioural output when external displays are connected to the MacBook (difficult to test as there's different ways of doing it, ranging from Apple's native methods to third-party docks with third-party protocols). If the community finds any issue with external displays/third-party docks, PRs/Bug reports are welcome.
 
 ## Quick Install
 
@@ -56,7 +61,7 @@ flowchart TB
     
     MONITOR --> CHECK{AC Power AND Lid Closed?}
     
-    CHECK -->|No| ALLOW_SLEEP[Allow Normal Sleep]
+    CHECK -->|No| ALLOW_SLEEP[Allow Normal Sleep aka Apple's default behaviour]
     CHECK -->|Yes| PREVENT[Prevent Sleep]
     
     PREVENT --> NOTIFY_ON["Sleep prevention active"]
