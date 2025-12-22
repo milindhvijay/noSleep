@@ -1,21 +1,21 @@
 # noSleep
 
-> Prevents macOS from sleepung when lid is closed, but AC power is enabled. Event-driven daemon using native IOKit APIs.
+> Prevents macOS from sleeping when lid is closed, but AC power is enabled. Event-driven daemon using native IOKit APIs.
 > 
 > Tested on MBP M2 and M5 chips, on macOS 26.2
 
 [![Swift](https://img.shields.io/badge/Swift-orange.svg)](https://swift.org)
 [![Platform](https://img.shields.io/badge/platform-macOS-lightgrey.svg)](https://developer.apple.com/macos/)
-[![License](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
+[![Licence](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENCE)
 
 ## Features
 
 - **Event-driven** — No polling, uses IOKit callbacks for instant response
-- **Lightweight** — ~80KB binary, minimal memory footprint  
+- **Lightweight** — ~80 KB binary, minimal memory footprint  
 - **Native** — Pure Swift, zero dependencies
 - **launchd integration** — Auto-start on login, auto-restart on crash
 
-## Behavior
+## Behaviour
 
 | Condition | Sleep |
 |-----------|-------|
@@ -33,7 +33,7 @@ Behavioural output when external displays are connected to the MacBook (difficul
 noSleep start
 ```
 
-This will compile, install to `~/bin`, set up launchd, and start the daemon.
+This will compile, install to `~/bin`, set up launchd (bootstrap), and start the daemon.
 
 ## Usage
 
@@ -73,6 +73,6 @@ flowchart TB
     WAIT -->|Power/Lid Changes| MONITOR
 ```
 
-## License
+## Licence
 
-Licensed under GPLv3. See LICENSE file for details.
+Licensed under GPLv3. See LICENCE file for details.
