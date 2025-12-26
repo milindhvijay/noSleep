@@ -4,17 +4,19 @@ import Foundation
 
 @discardableResult
 func shell(_ command: String) -> (output: String, status: Int32) {
-    let task = Process()
-    let pipe = Pipe()
-    task.standardOutput = pipe
-    task.standardError = pipe
-    task.launchPath = "/bin/zsh"
-    task.arguments = ["-c", command]
-    task.launch()
-    task.waitUntilExit()
-    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-    let output = String(data: data, encoding: .utf8) ?? ""
-    return (output, task.terminationStatus)
+    autoreleasepool {
+        let task = Process()
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = pipe
+        task.launchPath = "/bin/zsh"
+        task.arguments = ["-c", command]
+        task.launch()
+        task.waitUntilExit()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        return (output, task.terminationStatus)
+    }
 }
 
 func getUID() -> String {
@@ -36,9 +38,9 @@ func notify(_ message: String, subtitle: String? = nil, sound: String = "Glass")
 }
 
 func notifyPreventing() {
-    notify("Sleep prevention active", subtitle: "AC Power + Lid Closed", sound: "Hero")
+    notify("Sleep Prevention Active", subtitle: "AC Power + Lid Closed", sound: "Hero")
 }
 
 func notifyRestored(reason: String) {
-    notify("Normal behaviour restored", subtitle: reason, sound: "Glass")
+    notify("Normal Behaviour Restored", subtitle: reason, sound: "Glass")
 }
