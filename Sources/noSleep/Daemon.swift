@@ -13,45 +13,55 @@ private var gRootDomainService: io_service_t = 0
 // Power source change notifications come in via a CFRunLoopSource.
 private var gPowerSource: CFRunLoopSource?
 private var gSetupComplete = false
-// All state transitions are serialized here. The IOKit callbacks stay lightweight and just schedule work.
-private let gStateQueue = DispatchQueue(label: "com.noSleep.daemon.state")
-private var gPendingEvaluation: DispatchWorkItem?
+// Coalescing timer: IOKit/IOPS callbacks often fire in bursts. We delay evaluation by a short
+// interval and reset the timer on each event. This runs entirely on the main RunLoop—no extra threads.
+// We reuse a single timer and reschedule it to avoid allocation churn.
+private var gCoalesceTimer: CFRunLoopTimer!
+private let kCoalesceIntervalSeconds: CFTimeInterval = 0.15
+private let kDistantFuture: CFAbsoluteTime = CFAbsoluteTime.greatestFiniteMagnitude
 
-func handleStateChange() {
-    guard gSetupComplete else { return }
-
-    autoreleasepool {
-        // IOKit/IOPS often fire in bursts. Coalesce them so we do one evaluation per “event storm”.
-        // This keeps CPU wakeups and allocations flat over time.
-        gStateQueue.async {
-            gPendingEvaluation?.cancel()
-
-            var work: DispatchWorkItem!
-            work = DispatchWorkItem {
-                if work.isCancelled { return }
-                autoreleasepool {
-                    evaluateAndApplyState()
-                }
-            }
-
-            gPendingEvaluation = work
-            gStateQueue.asyncAfter(deadline: .now() + .milliseconds(150), execute: work)
-        }
-    }
+private func createCoalesceTimer() {
+    var context = CFRunLoopTimerContext()
+    gCoalesceTimer = CFRunLoopTimerCreate(
+        kCFAllocatorDefault,
+        kDistantFuture,  // Start dormant
+        kDistantFuture,  // No repeat
+        0,
+        0,
+        { _, _ in
+            // Move timer back to dormant state
+            CFRunLoopTimerSetNextFireDate(gCoalesceTimer, kDistantFuture)
+            evaluateAndApplyState()
+        },
+        &context
+    )
+    CFRunLoopAddTimer(CFRunLoopGetMain(), gCoalesceTimer, .defaultMode)
 }
 
+@inline(__always)
+func handleStateChange() {
+    guard gSetupComplete else { return }
+    // Reschedule the existing timer—no allocation, just update fire date.
+    CFRunLoopTimerSetNextFireDate(gCoalesceTimer, CFAbsoluteTimeGetCurrent() + kCoalesceIntervalSeconds)
+}
+
+@inline(__always)
 private func readIsOnACPower() -> Bool {
-    // Use the “providing power source type” fast path.
+    // Use the "providing power source type" fast path.
     // Avoids list/dictionary bridging, which is heavier and unnecessary for the daemon.
     let snapshot = IOPSCopyPowerSourcesInfo().takeRetainedValue()
     let type = IOPSGetProvidingPowerSourceType(snapshot)?.takeUnretainedValue() as String?
     return type == kIOPSACPowerValue as String
 }
 
+// Cache the CFString to avoid repeated bridging on every lid check.
+private let kAppleClamshellStateKey: CFString = "AppleClamshellState" as CFString
+
+@inline(__always)
 private func readIsLidClosed() -> Bool {
     guard gRootDomainService != 0 else { return false }
-    // IORegistryEntryCreateCFProperty follows “Create Rule”: we own the returned CF object.
-    guard let prop = IORegistryEntryCreateCFProperty(gRootDomainService, "AppleClamshellState" as CFString, kCFAllocatorDefault, 0) else {
+    // IORegistryEntryCreateCFProperty follows "Create Rule": we own the returned CF object.
+    guard let prop = IORegistryEntryCreateCFProperty(gRootDomainService, kAppleClamshellStateKey, kCFAllocatorDefault, 0) else {
         return false
     }
     return prop.takeRetainedValue() as? Bool ?? false
@@ -81,10 +91,9 @@ private func evaluateAndApplyState() {
 }
 
 func clamshellCallback(refCon: UnsafeMutableRawPointer?, service: io_service_t, messageType: UInt32, messageArgument: UnsafeMutableRawPointer?) {
-    // messageType varies across macOS versions, just check state
-    autoreleasepool {
-        handleStateChange()
-    }
+    // messageType varies across macOS versions, just check state.
+    // No autoreleasepool needed: handleStateChange is lightweight and doesn't bridge CF objects.
+    handleStateChange()
 }
 
 func setupClamshellNotification() -> Bool {
@@ -122,10 +131,10 @@ func setupClamshellNotification() -> Bool {
 func cleanupAndExit() {
     gSetupComplete = false
 
-    // Cancel pending work before releasing any IOKit handles that the work might touch.
-    gStateQueue.sync {
-        gPendingEvaluation?.cancel()
-        gPendingEvaluation = nil
+    // Invalidate the coalescing timer.
+    if gCoalesceTimer != nil {
+        CFRunLoopTimerInvalidate(gCoalesceTimer)
+        gCoalesceTimer = nil
     }
 
     gSleepPreventer.allowSleep()
@@ -165,13 +174,14 @@ func runDaemon() {
         CFRunLoopStop(CFRunLoopGetMain())
     }
     
+    // Create the coalescing timer once (reused for all events).
+    createCoalesceTimer()
+    
     // Register notifications first, then do a single evaluation to establish the initial assertion state.
     _ = setupClamshellNotification()
     
     gPowerSource = IOPSNotificationCreateRunLoopSource({ _ in
-        autoreleasepool {
-            handleStateChange()
-        }
+        handleStateChange()
     }, nil).takeRetainedValue()
 
     if let source = gPowerSource {
@@ -180,11 +190,8 @@ func runDaemon() {
 
     gSetupComplete = true
     
-    gStateQueue.sync {
-        autoreleasepool {
-            evaluateAndApplyState()
-        }
-    }
+    // Initial evaluation runs synchronously on main thread—no dispatch needed.
+    evaluateAndApplyState()
     // Run forever; SIGINT/SIGTERM will stop the run loop and we’ll clean up on the way out.
     CFRunLoopRun()
     
