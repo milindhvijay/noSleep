@@ -31,6 +31,7 @@ func printVersion() {
 }
 
 let args = CommandLine.arguments
+// Subcommands are short-lived CLI invocations; no args means we run the daemon in the foreground.
 if args.count > 1 {
     switch args[1] {
     case "status":              cmdStatus()
