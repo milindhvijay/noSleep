@@ -9,6 +9,7 @@ private var gPreviousState: PowerState?
 private var gNotifyPort: IONotificationPortRef?
 private var gNotifierObject: io_object_t = 0
 private var gSetupComplete = false
+private enum StateChangeGuard { static var processing = false }
 
 func shouldPreventSleep(_ state: PowerState) -> Bool {
     return state.isOnAC && state.isLidClosed
@@ -16,43 +17,46 @@ func shouldPreventSleep(_ state: PowerState) -> Bool {
 
 func handleStateChange() {
     guard gSetupComplete else { return }
-    
-    // IOKit can fire rapid duplicate callbacks
-    struct Guard { static var processing = false }
-    guard !Guard.processing else { return }
-    Guard.processing = true
-    defer { Guard.processing = false }
-    
-    let current = getCurrentPowerState()
-    
-    guard gPreviousState != nil else {
-        gPreviousState = current
-        return
-    }
-    
-    let shouldPrevent = shouldPreventSleep(current)
-    let wasActive = gSleepPreventer.isActive
-    
-    if shouldPrevent && !wasActive {
-        gSleepPreventer.preventSleep()
-        notifyPreventing()
-    } else if !shouldPrevent && wasActive {
-        gSleepPreventer.allowSleep()
-        if !current.isOnAC {
-            notifyRestored(reason: "Switched to battery")
-        } else if !current.isLidClosed {
-            notifyRestored(reason: "Lid opened")
-        } else {
-            notifyRestored(reason: "Ready to sleep")
+
+    autoreleasepool {
+        // IOKit can fire rapid duplicate callbacks
+        guard !StateChangeGuard.processing else { return }
+        StateChangeGuard.processing = true
+        defer { StateChangeGuard.processing = false }
+
+        let current = getCurrentPowerState()
+
+        guard gPreviousState != nil else {
+            gPreviousState = current
+            return
         }
+
+        let shouldPrevent = shouldPreventSleep(current)
+        let wasActive = gSleepPreventer.isActive
+
+        if shouldPrevent && !wasActive {
+            gSleepPreventer.preventSleep()
+            notifyPreventing()
+        } else if !shouldPrevent && wasActive {
+            gSleepPreventer.allowSleep()
+            if !current.isOnAC {
+                notifyRestored(reason: "Switched to battery")
+            } else if !current.isLidClosed {
+                notifyRestored(reason: "Lid opened")
+            } else {
+                notifyRestored(reason: "Ready to sleep")
+            }
+        }
+
+        gPreviousState = current
     }
-    
-    gPreviousState = current
 }
 
 func clamshellCallback(refCon: UnsafeMutableRawPointer?, service: io_service_t, messageType: UInt32, messageArgument: UnsafeMutableRawPointer?) {
     // messageType varies across macOS versions, just check state
-    handleStateChange()
+    autoreleasepool {
+        handleStateChange()
+    }
 }
 
 func setupClamshellNotification() -> Bool {
@@ -118,7 +122,9 @@ func runDaemon() {
     }
     
     let powerSource = IOPSNotificationCreateRunLoopSource({ _ in
-        handleStateChange()
+        autoreleasepool {
+            handleStateChange()
+        }
     }, nil).takeRetainedValue()
     
     CFRunLoopAddSource(CFRunLoopGetCurrent(), powerSource, .defaultMode)
