@@ -20,7 +20,7 @@ func acquireLock() -> Bool {
     // Helpful for tooling/debugging: write the PID into the lock file.
     ftruncate(lockFD, 0)
     let pidStr = "\(getpid())\n"
-    write(lockFD, pidStr, pidStr.count)
+    write(lockFD, pidStr, pidStr.utf8.count)
     return true
 }
 
