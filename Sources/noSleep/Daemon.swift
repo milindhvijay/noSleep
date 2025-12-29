@@ -144,6 +144,9 @@ func cleanupAndExit() {
         gNotifierObject = 0
     }
     if let port = gNotifyPort {
+        // Remove run loop source before destroying the port
+        let source = IONotificationPortGetRunLoopSource(port).takeUnretainedValue()
+        CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .defaultMode)
         IONotificationPortDestroy(port)
         gNotifyPort = nil
     }
@@ -173,6 +176,8 @@ func runDaemon() {
     signal(SIGTERM) { _ in
         CFRunLoopStop(CFRunLoopGetMain())
     }
+    // Auto-reap child processes (osascript) to prevent zombies.
+    signal(SIGCHLD, SIG_IGN)
     
     // Create the coalescing timer once (reused for all events).
     createCoalesceTimer()
