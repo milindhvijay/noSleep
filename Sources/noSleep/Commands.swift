@@ -2,6 +2,44 @@
 
 import Foundation
 
+@discardableResult
+// Lightweight helper for running system tools.
+// We intentionally discard output to avoid Pipe buffering/allocation overhead.
+private func runProcess(_ launchPath: String, _ arguments: [String]) -> Int32 {
+    autoreleasepool {
+        let task = Process()
+        // Use executableURL rather than launchPath/launch() (launch is deprecated).
+        task.executableURL = URL(fileURLWithPath: launchPath)
+        task.arguments = arguments
+
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = FileHandle.nullDevice
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+        } catch {
+            return 1
+        }
+
+        return task.terminationStatus
+    }
+}
+
+@discardableResult
+// launchctl is the only supported way to manage the LaunchAgent from a CLI tool.
+// Using it directly avoids spawning a shell and avoids fragile string parsing.
+private func runLaunchctl(_ arguments: [String]) -> Int32 {
+    runProcess("/bin/launchctl", arguments)
+}
+
+private func isLaunchdJobLoaded() -> Bool {
+    let domain = "gui/\(getUID())/\(LABEL)"
+    // 'launchctl print' is a cheap existence check: status 0 means the job is loaded.
+    let status = runLaunchctl(["print", domain])
+    return status == 0
+}
+
 func cmdStatus() {
     print("---- noSleep status ----")
     
@@ -18,14 +56,13 @@ func cmdStatus() {
         print("Daemon: NOT running")
     }
     
-    let (output, _) = shell("launchctl list | grep '\(LABEL)'")
-    print("launchd: \(output.contains(LABEL) ? "LOADED" : "NOT loaded")")
+    print("launchd: \(isLaunchdJobLoaded() ? "LOADED" : "NOT loaded")")
 }
 
 func cmdStart() {
     print("[noSleep] Starting via launchctl")
-    shell("launchctl enable gui/\(getUID())/\(LABEL)")
-    shell("launchctl bootstrap gui/\(getUID()) '\(PLIST_PATH)'")
+    _ = runLaunchctl(["enable", "gui/\(getUID())/\(LABEL)"])
+    _ = runLaunchctl(["bootstrap", "gui/\(getUID())", PLIST_PATH])
     print("[noSleep] Started")
 }
 
@@ -39,8 +76,8 @@ func cmdStop() {
         daemonPID = pid
     }
     
-    shell("launchctl bootout gui/\(getUID()) '\(PLIST_PATH)' 2>/dev/null || true")
-    shell("launchctl disable gui/\(getUID())/\(LABEL) 2>/dev/null || true")
+    _ = runLaunchctl(["bootout", "gui/\(getUID())", PLIST_PATH])
+    _ = runLaunchctl(["disable", "gui/\(getUID())/\(LABEL)"])
     
     if let pid = daemonPID {
         for _ in 0..<50 {  // 5 sec max
@@ -69,8 +106,8 @@ func cmdRestart() {
         kill(pid, SIGTERM)
     }
     
-    shell("launchctl bootout gui/\(getUID()) '\(PLIST_PATH)' 2>/dev/null || true")
-    shell("launchctl disable gui/\(getUID())/\(LABEL) 2>/dev/null || true")
+    _ = runLaunchctl(["bootout", "gui/\(getUID())", PLIST_PATH])
+    _ = runLaunchctl(["disable", "gui/\(getUID())/\(LABEL)"])
     
     if let pid = daemonPID {
         for _ in 0..<50 {
@@ -81,8 +118,8 @@ func cmdRestart() {
     
     try? FileManager.default.removeItem(atPath: LOCKFILE)
     
-    shell("launchctl enable gui/\(getUID())/\(LABEL)")
-    shell("launchctl bootstrap gui/\(getUID()) '\(PLIST_PATH)'")
+    _ = runLaunchctl(["enable", "gui/\(getUID())/\(LABEL)"])
+    _ = runLaunchctl(["bootstrap", "gui/\(getUID())", PLIST_PATH])
     print("[noSleep] Restarted")
 }
 
@@ -100,11 +137,9 @@ func cmdDoctor() {
         daemonStatus = "Active (pid \(pid))"
     }
     
-    let (launchctl, _) = shell("launchctl list | grep '\(LABEL)' 2>&1")
-    let launchdStatus = launchctl.isEmpty ? "Not loaded" : "Loaded"
-    
-    let (plutil, _) = shell("plutil -lint '\(PLIST_PATH)' 2>&1")
-    let plistStatus = plutil.contains("OK") ? "Valid" : "Missing or invalid"
+    let launchdStatus = isLaunchdJobLoaded() ? "Loaded" : "Not loaded"
+
+    let plistStatus = runProcess("/usr/bin/plutil", ["-lint", PLIST_PATH]) == 0 ? "Valid" : "Missing or invalid"
     
     print("""
     SYSTEM STATE:
@@ -122,9 +157,9 @@ func cmdDoctor() {
 
 func cmdUninstall() {
     print("[noSleep] Uninstalling...")
-    
-    shell("launchctl bootout gui/\(getUID()) '\(PLIST_PATH)' 2>/dev/null || true")
-    shell("launchctl disable gui/\(getUID())/\(LABEL) 2>/dev/null || true")
+
+    _ = runLaunchctl(["bootout", "gui/\(getUID())", PLIST_PATH])
+    _ = runLaunchctl(["disable", "gui/\(getUID())/\(LABEL)"])
     
     if let data = FileManager.default.contents(atPath: LOCKFILE),
        let pidStr = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
