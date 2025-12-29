@@ -17,6 +17,8 @@ func notify(_ message: String, subtitle: String? = nil, sound: String = "Glass")
         static var nextMessage: String = ""
         static var nextSubtitle: String?
         static var nextSound: String = "Glass"
+        static var hasPendingUpdate: Bool = false
+        static var inFlight: Process?
         static let minIntervalNanos: UInt64 = 2_000_000_000
     }
 
@@ -30,17 +32,32 @@ func notify(_ message: String, subtitle: String? = nil, sound: String = "Glass")
         NotifyState.nextMessage = message
         NotifyState.nextSubtitle = subtitle
         NotifyState.nextSound = sound
+        NotifyState.hasPendingUpdate = true
 
-        NotifyState.pending?.cancel()
+        func attemptSend() {
+            guard NotifyState.hasPendingUpdate else { return }
+            guard NotifyState.inFlight == nil else { return }
 
-        let nowNanos = DispatchTime.now().uptimeNanoseconds
-        let last = NotifyState.lastFireUptimeNanos
-        let elapsed = last == 0 ? NotifyState.minIntervalNanos : (nowNanos &- last)
-        let remaining = elapsed >= NotifyState.minIntervalNanos ? 0 : (NotifyState.minIntervalNanos - elapsed)
+            NotifyState.pending?.cancel()
+            NotifyState.pending = nil
 
-        var work: DispatchWorkItem!
-        work = DispatchWorkItem {
-            if work.isCancelled { return }
+            let nowNanos = DispatchTime.now().uptimeNanoseconds
+            let last = NotifyState.lastFireUptimeNanos
+            let elapsed = last == 0 ? NotifyState.minIntervalNanos : (nowNanos &- last)
+            let remaining = elapsed >= NotifyState.minIntervalNanos ? 0 : (NotifyState.minIntervalNanos - elapsed)
+
+            if remaining > 0 {
+                var work: DispatchWorkItem!
+                work = DispatchWorkItem {
+                    if work.isCancelled { return }
+                    attemptSend()
+                }
+                NotifyState.pending = work
+                NotifyState.queue.asyncAfter(deadline: .now() + .nanoseconds(Int(remaining)), execute: work)
+                return
+            }
+
+            NotifyState.hasPendingUpdate = false
 
             let msg = NotifyState.nextMessage
             let sub = NotifyState.nextSubtitle
@@ -55,29 +72,43 @@ func notify(_ message: String, subtitle: String? = nil, sound: String = "Glass")
             script += " sound name \"\(escapeAppleScriptString(snd))\""
 
             let task = Process()
-            task.launchPath = "/usr/bin/osascript"
+            task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
             task.arguments = ["-e", script]
             // We don't need output; avoiding pipes keeps allocations down in long-running daemons.
             task.standardOutput = FileHandle.nullDevice
             task.standardError = FileHandle.nullDevice
 
-            do {
-                try task.run()
-                task.waitUntilExit()
-            } catch {
-                // ignore
+            task.terminationHandler = { _ in
+                NotifyState.queue.async {
+                    NotifyState.inFlight = nil
+                    attemptSend()
+                }
             }
 
-            NotifyState.lastFireUptimeNanos = DispatchTime.now().uptimeNanoseconds
+            do {
+                try task.run()
+
+                // Update the rate-limit at successful spawn time.
+                // If osascript runs long, we still won't overlap spawns.
+                NotifyState.lastFireUptimeNanos = DispatchTime.now().uptimeNanoseconds
+                NotifyState.inFlight = task
+            } catch {
+                // Failed to spawn; clear in-flight and retry later (still coalesced).
+                NotifyState.inFlight = nil
+                NotifyState.hasPendingUpdate = true
+                var work: DispatchWorkItem!
+                work = DispatchWorkItem {
+                    if work.isCancelled { return }
+                    attemptSend()
+                }
+                NotifyState.pending = work
+                NotifyState.queue.asyncAfter(deadline: .now() + .seconds(1), execute: work)
+            }
         }
 
-        NotifyState.pending = work
-
-        if remaining == 0 {
-            NotifyState.queue.async(execute: work)
-        } else {
-            NotifyState.queue.asyncAfter(deadline: .now() + .nanoseconds(Int(remaining)), execute: work)
-        }
+        NotifyState.pending?.cancel()
+        NotifyState.pending = nil
+        attemptSend()
     }
 }
 
