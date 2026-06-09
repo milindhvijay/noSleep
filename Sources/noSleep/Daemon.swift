@@ -5,6 +5,8 @@ import IOKit
 import IOKit.ps
 
 private var gSleepPreventer = SleepPreventer()
+private var gSigintSource: DispatchSourceSignal?
+private var gSigtermSource: DispatchSourceSignal?
 private var gNotifyPort: IONotificationPortRef?
 private var gNotifierObject: io_object_t = 0
 // We retain the root domain service so lid reads are just a property lookup (no matching on every event).
@@ -169,14 +171,21 @@ func runDaemon() {
         exit(1)
     }
     
-    signal(SIGINT) { _ in
-        CFRunLoopStop(CFRunLoopGetMain())
-    }
-    signal(SIGTERM) { _ in
-        CFRunLoopStop(CFRunLoopGetMain())
-    }
+    // Suppress default signal actions before installing DispatchSource handlers.
+    // DispatchSourceSignal delivers signals safely on the main queue, avoiding
+    // async-signal-safety constraints that apply to raw signal handlers.
+    signal(SIGINT, SIG_IGN)
+    signal(SIGTERM, SIG_IGN)
     // Auto-reap child processes (osascript) to prevent zombies.
     signal(SIGCHLD, SIG_IGN)
+
+    gSigintSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+    gSigintSource?.setEventHandler { CFRunLoopStop(CFRunLoopGetMain()) }
+    gSigintSource?.resume()
+
+    gSigtermSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+    gSigtermSource?.setEventHandler { CFRunLoopStop(CFRunLoopGetMain()) }
+    gSigtermSource?.resume()
     
     // Create the coalescing timer once (reused for all events).
     createCoalesceTimer()
