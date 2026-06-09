@@ -124,6 +124,11 @@ func setupClamshellNotification() -> Bool {
     if result != KERN_SUCCESS {
         IOObjectRelease(service)
         gRootDomainService = 0
+        // Remove the run loop source and destroy the port to avoid leaking both.
+        // IONotificationPortDestroy owns the source; remove it from the run loop first.
+        CFRunLoopRemoveSource(CFRunLoopGetCurrent(), runLoopSource, .defaultMode)
+        IONotificationPortDestroy(notifyPort)
+        gNotifyPort = nil
     }
 
     return result == KERN_SUCCESS
