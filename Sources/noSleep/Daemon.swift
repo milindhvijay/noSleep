@@ -196,7 +196,11 @@ func runDaemon() {
     createCoalesceTimer()
     
     // Register notifications first, then do a single evaluation to establish the initial assertion state.
-    _ = setupClamshellNotification()
+    guard setupClamshellNotification() else {
+        fputs("[ERROR] Failed to register lid-close notification -- cannot monitor clamshell state\n", stderr)
+        cleanupAndExit()
+        exit(1)
+    }
     
     gPowerSource = IOPSNotificationCreateRunLoopSource({ _ in
         handleStateChange()
