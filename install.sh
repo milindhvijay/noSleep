@@ -29,6 +29,7 @@ cat > "$PLIST_DEST" << EOF
     <key>ProgramArguments</key>
     <array>
         <string>$HOME/bin/noSleep</string>
+        <string>daemon</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
