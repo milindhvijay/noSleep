@@ -11,7 +11,32 @@ if ! command -v swiftc &> /dev/null; then
 fi
 
 echo "Compiling..."
-swiftc -O Sources/noSleep/*.swift -o noSleep
+CPU_BRAND=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "")
+TARGET_CPU=$(echo "$CPU_BRAND" | grep -oiE 'Apple M[0-9]+' | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+COMPILED=false
+
+if [[ -n "$TARGET_CPU" ]]; then
+    echo "Detected $CPU_BRAND -- trying optimised build with -target-cpu $TARGET_CPU"
+    if swiftc -O -target-cpu "$TARGET_CPU" Sources/noSleep/*.swift -o noSleep 2>/tmp/noSleep_compile_error.log; then
+        echo "Optimised compilation successful"
+        COMPILED=true
+    else
+        echo "Optimised compilation failed, falling back to standard build"
+        cat /tmp/noSleep_compile_error.log
+    fi
+    rm -f /tmp/noSleep_compile_error.log
+fi
+
+if [[ "$COMPILED" == false ]]; then
+    if ! swiftc -O Sources/noSleep/*.swift -o noSleep 2>/tmp/noSleep_compile_error.log; then
+        echo "Compilation failed:"
+        cat /tmp/noSleep_compile_error.log
+        rm -f /tmp/noSleep_compile_error.log
+        exit 1
+    fi
+    rm -f /tmp/noSleep_compile_error.log
+    echo "Standard compilation successful"
+fi
 
 mkdir -p ~/bin
 cp noSleep ~/bin/noSleep
