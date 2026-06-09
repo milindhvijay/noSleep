@@ -1,7 +1,7 @@
 # noSleep
 
-> Prevents macOS from sleepung when lid is closed, but AC power is enabled. Event-driven daemon using native IOKit APIs.
-> 
+> Prevents macOS from sleeping when the lid is closed on AC power. Event-driven daemon using native IOKit APIs.
+>
 > Tested on MBP M2 and M5 chips, on macOS 26.2
 
 [![Swift](https://img.shields.io/badge/Swift-orange.svg)](https://swift.org)
@@ -10,21 +10,23 @@
 
 ## Features
 
-- **Event-driven** — No polling, uses IOKit callbacks for instant response
-- **Lightweight** — ~80KB binary, minimal memory footprint  
-- **Native** — Pure Swift, zero dependencies
-- **launchd integration** — Auto-start on login, auto-restart on crash
+- **Event-driven** -- No polling, uses IOKit callbacks for instant response
+- **Lightweight** -- ~80KB binary, minimal memory footprint
+- **Native** -- Pure Swift, zero dependencies
+- **launchd integration** -- Auto-start on login, auto-restart on crash
+- **Multi-user safe** -- Per-user lock file, no shared state between accounts
 
-## Behavior
+## Behaviour
 
-| Condition | Sleep |
-|-----------|-------|
-| AC + Lid Closed | ❌ Prevented |
-| AC + Lid Open | ✅ Allowed (Apple's system default behaviour) |
-| Battery + Any | ✅ Allowed (Apple's system default behaviour) |
+| Condition | Result |
+|-----------|--------|
+| AC + Lid Closed | Sleep prevented |
+| AC + Lid Open | Allowed (system default) |
+| Battery + Any | Allowed (system default) |
 
 ## Not yet tested/verified
-Behavioural output when external displays are connected to the MacBook (difficult to test as there's different ways of doing it, ranging from Apple's native methods to third-party docks with third-party protocols). If the community finds any issue with external displays/third-party docks, PRs/Bug reports are welcome.
+
+Behavioural output when external displays are connected to the MacBook (difficult to test as there are different ways of doing it, ranging from Apple's native methods to third-party docks with third-party protocols). If the community finds any issue with external displays or third-party docks, PRs and bug reports are welcome.
 
 ## Quick Install
 
@@ -33,20 +35,20 @@ Behavioural output when external displays are connected to the MacBook (difficul
 noSleep start
 ```
 
-This will compile, install to `~/bin`, set up launchd, and start the daemon.
+This will compile, install to `~/bin`, set up launchd, and start the daemon. On Apple Silicon the install script detects your CPU model and compiles with `-target-cpu` for additional optimisation, falling back to a standard `-O` build if needed.
 
 ## Usage
 
-```bash
-noSleep              # Run daemon (foreground)
-noSleep status       # Show current state
-noSleep start        # Start via launchd
-noSleep stop         # Stop daemon
-noSleep restart      # Restart daemon
-noSleep doctor       # Run diagnostics
-noSleep uninstall    # Remove all files
-noSleep --help       # Show help
-noSleep --version    # Show version
+```
+noSleep daemon       Run daemon in foreground (used by launchd)
+noSleep status       Show current power, lid, and daemon state
+noSleep start        Start via launchd (auto-start on login)
+noSleep stop         Stop daemon
+noSleep restart      Restart daemon
+noSleep doctor       Run diagnostics (read-only)
+noSleep uninstall    Remove all installed files
+noSleep --help       Show help
+noSleep --version    Show version
 ```
 
 ## Requirements
@@ -57,21 +59,23 @@ noSleep --version    # Show version
 
 ```mermaid
 flowchart TB
-    START([noSleep Daemon Starts]) --> MONITOR[Monitor Power & Lid State]
-    
-    MONITOR --> CHECK{AC Power AND Lid Closed?}
-    
-    CHECK -->|No| ALLOW_SLEEP[Allow Normal Sleep aka Apple's default behaviour]
-    CHECK -->|Yes| PREVENT[Prevent Sleep]
-    
-    PREVENT --> NOTIFY_ON["Sleep prevention active"]
-    ALLOW_SLEEP --> NOTIFY_OFF["Normal behaviour restored"]
-    
-    NOTIFY_ON --> WAIT((Wait for Change))
+    START([noSleep daemon starts]) --> MONITOR[Monitor power and lid state]
+
+    MONITOR --> CHECK{AC power AND lid closed?}
+
+    CHECK -->|No| ALLOW[Allow normal sleep]
+    CHECK -->|Yes| PREVENT[Prevent sleep via IOPMAssertion]
+
+    PREVENT --> NOTIFY_ON[Notify: sleep prevention active]
+    ALLOW --> NOTIFY_OFF[Notify: normal behaviour restored]
+
+    NOTIFY_ON --> WAIT((Wait for change))
     NOTIFY_OFF --> WAIT
-    
-    WAIT -->|Power/Lid Changes| MONITOR
+
+    WAIT -->|Power or lid change| MONITOR
 ```
+
+IOKit fires `IOPMrootDomain` interest notifications on lid state changes and `IOPSNotificationCreateRunLoopSource` on power source changes. Both feed into a shared 150ms coalescing timer on the main run loop, so burst events (common on wake) trigger a single state evaluation rather than many. Notifications to the user are dispatched via `posix_spawn` (fire-and-forget) so the daemon never blocks waiting for `osascript` to complete.
 
 ## License
 
