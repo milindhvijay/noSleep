@@ -54,9 +54,6 @@ private func readIsOnACPower() -> Bool {
     return type == kIOPSACPowerValue as String
 }
 
-// Cache the CFString to avoid repeated bridging on every lid check.
-private let kAppleClamshellStateKey: CFString = "AppleClamshellState" as CFString
-
 @inline(__always)
 private func readIsLidClosed() -> Bool {
     guard gRootDomainService != 0 else { return false }

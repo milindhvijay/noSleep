@@ -3,8 +3,8 @@
 import Foundation
 import IOKit.ps
 
-// Cache CFString keys to avoid repeated bridging allocations.
-private let kAppleClamshellStateKey: CFString = "AppleClamshellState" as CFString
+// Shared CFString keys -- internal so Daemon.swift can use the same instance.
+let kAppleClamshellStateKey: CFString = "AppleClamshellState" as CFString
 private let kCurrentCapacityKey: CFString = kIOPSCurrentCapacityKey as CFString
 
 struct PowerState {
