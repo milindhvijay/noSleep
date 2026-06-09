@@ -16,7 +16,7 @@ private var gSetupComplete = false
 // Coalescing timer: IOKit/IOPS callbacks often fire in bursts. We delay evaluation by a short
 // interval and reset the timer on each event. This runs entirely on the main RunLoop—no extra threads.
 // We reuse a single timer and reschedule it to avoid allocation churn.
-private var gCoalesceTimer: CFRunLoopTimer!
+private var gCoalesceTimer: CFRunLoopTimer?
 private let kCoalesceIntervalSeconds: CFTimeInterval = 0.15
 private let kDistantFuture: CFAbsoluteTime = CFAbsoluteTime.greatestFiniteMagnitude
 
@@ -28,21 +28,23 @@ private func createCoalesceTimer() {
         kDistantFuture,  // No repeat
         0,
         0,
-        { _, _ in
-            // Move timer back to dormant state
-            CFRunLoopTimerSetNextFireDate(gCoalesceTimer, kDistantFuture)
+        { timer, _ in
+            // Use the timer parameter directly rather than the global to avoid a force-unwrap.
+            CFRunLoopTimerSetNextFireDate(timer, kDistantFuture)
             evaluateAndApplyState()
         },
         &context
     )
-    CFRunLoopAddTimer(CFRunLoopGetMain(), gCoalesceTimer, .defaultMode)
+    if let timer = gCoalesceTimer {
+        CFRunLoopAddTimer(CFRunLoopGetMain(), timer, .defaultMode)
+    }
 }
 
 @inline(__always)
 func handleStateChange() {
-    guard gSetupComplete else { return }
-    // Reschedule the existing timer—no allocation, just update fire date.
-    CFRunLoopTimerSetNextFireDate(gCoalesceTimer, CFAbsoluteTimeGetCurrent() + kCoalesceIntervalSeconds)
+    guard gSetupComplete, let timer = gCoalesceTimer else { return }
+    // Reschedule the existing timer -- no allocation, just update fire date.
+    CFRunLoopTimerSetNextFireDate(timer, CFAbsoluteTimeGetCurrent() + kCoalesceIntervalSeconds)
 }
 
 @inline(__always)
@@ -129,8 +131,8 @@ func cleanupAndExit() {
     gSetupComplete = false
 
     // Invalidate the coalescing timer.
-    if gCoalesceTimer != nil {
-        CFRunLoopTimerInvalidate(gCoalesceTimer)
+    if let timer = gCoalesceTimer {
+        CFRunLoopTimerInvalidate(timer)
         gCoalesceTimer = nil
     }
 
