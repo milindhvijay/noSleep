@@ -6,6 +6,8 @@ import IOKit.ps
 // Shared CFString keys -- internal so Daemon.swift can use the same instance.
 let kAppleClamshellStateKey: CFString = "AppleClamshellState" as CFString
 private let kCurrentCapacityKey: CFString = kIOPSCurrentCapacityKey as CFString
+// Cached once to avoid bridging on every power-source check.
+let kACPowerType: String = kIOPSACPowerValue as String
 
 struct PowerState {
     let isOnAC: Bool
@@ -32,7 +34,7 @@ func getCurrentPowerState() -> PowerState {
     let snapshot = IOPSCopyPowerSourcesInfo().takeRetainedValue()
 
     let type = IOPSGetProvidingPowerSourceType(snapshot)?.takeUnretainedValue() as String?
-    let isOnAC = type == (kIOPSACPowerValue as String)
+    let isOnAC = type == kACPowerType
 
     var batteryPercent: Int?
     let sources = IOPSCopyPowerSourcesList(snapshot).takeRetainedValue()

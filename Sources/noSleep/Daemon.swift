@@ -51,7 +51,7 @@ private func readIsOnACPower() -> Bool {
     // Avoids list/dictionary bridging, which is heavier and unnecessary for the daemon.
     let snapshot = IOPSCopyPowerSourcesInfo().takeRetainedValue()
     let type = IOPSGetProvidingPowerSourceType(snapshot)?.takeUnretainedValue() as String?
-    return type == kIOPSACPowerValue as String
+    return type == kACPowerType
 }
 
 @inline(__always)
