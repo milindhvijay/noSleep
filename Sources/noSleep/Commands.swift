@@ -65,6 +65,10 @@ func cmdStatus() {
 }
 
 func cmdStart() {
+    guard !isLaunchdJobLoaded() else {
+        print("[noSleep] Already running")
+        return
+    }
     print("[noSleep] Starting via launchctl")
     _ = runLaunchctl(["enable", "gui/\(getUID())/\(LABEL)"])
     _ = runLaunchctl(["bootstrap", "gui/\(getUID())", PLIST_PATH])
