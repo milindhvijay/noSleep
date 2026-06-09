@@ -1,6 +1,7 @@
 // Commands.swift
 
 import Foundation
+import Darwin
 
 @discardableResult
 // Lightweight helper for running system tools.
@@ -33,6 +34,13 @@ private func runLaunchctl(_ arguments: [String]) -> Int32 {
     runProcess("/bin/launchctl", arguments)
 }
 
+private func readDaemonPID() -> Int32? {
+    guard let data = FileManager.default.contents(atPath: LOCKFILE),
+          let pidStr = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+          let pid = Int32(pidStr) else { return nil }
+    return pid
+}
+
 private func isLaunchdJobLoaded() -> Bool {
     let domain = "gui/\(getUID())/\(LABEL)"
     // 'launchctl print' is a cheap existence check: status 0 means the job is loaded.
@@ -47,10 +55,7 @@ func cmdStatus() {
     print("Power: \(state.isOnAC ? "AC" : "Battery")")
     print("Lid: \(state.isLidClosed ? "Closed" : "Open")")
     
-    if let data = FileManager.default.contents(atPath: LOCKFILE),
-       let pidStr = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-       let pid = Int32(pidStr),
-       kill(pid, 0) == 0 {
+    if let pid = readDaemonPID(), kill(pid, 0) == 0 {
         print("Daemon: RUNNING (pid \(pid))")
     } else {
         print("Daemon: NOT running")
@@ -69,25 +74,20 @@ func cmdStart() {
 func cmdStop() {
     print("[noSleep] Stopping via launchctl")
     
-    var daemonPID: Int32? = nil
-    if let data = FileManager.default.contents(atPath: LOCKFILE),
-       let pidStr = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-       let pid = Int32(pidStr) {
-        daemonPID = pid
-    }
-    
+    let daemonPID = readDaemonPID()
+
     _ = runLaunchctl(["bootout", "gui/\(getUID())", PLIST_PATH])
     _ = runLaunchctl(["disable", "gui/\(getUID())/\(LABEL)"])
-    
+
     if let pid = daemonPID {
         for _ in 0..<50 {  // 5 sec max
             if kill(pid, 0) != 0 { break }
             usleep(100_000)
         }
     }
-    
+
     try? FileManager.default.removeItem(atPath: LOCKFILE)
-    
+
     if let pid = daemonPID {
         print("[noSleep] Stopped (pid \(pid))")
     } else {
@@ -98,13 +98,8 @@ func cmdStop() {
 func cmdRestart() {
     print("[noSleep] Restarting via launchctl")
     
-    var daemonPID: Int32? = nil
-    if let data = FileManager.default.contents(atPath: LOCKFILE),
-       let pidStr = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-       let pid = Int32(pidStr) {
-        daemonPID = pid
-        kill(pid, SIGTERM)
-    }
+    let daemonPID = readDaemonPID()
+    if let pid = daemonPID { kill(pid, SIGTERM) }
     
     _ = runLaunchctl(["bootout", "gui/\(getUID())", PLIST_PATH])
     _ = runLaunchctl(["disable", "gui/\(getUID())/\(LABEL)"])
@@ -130,10 +125,7 @@ func cmdDoctor() {
     let binaryPath = CommandLine.arguments[0]
     
     var daemonStatus = "Inactive"
-    if let data = FileManager.default.contents(atPath: LOCKFILE),
-       let pidStr = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-       let pid = Int32(pidStr),
-       kill(pid, 0) == 0 {
+    if let pid = readDaemonPID(), kill(pid, 0) == 0 {
         daemonStatus = "Active (pid \(pid))"
     }
     
@@ -161,9 +153,7 @@ func cmdUninstall() {
     _ = runLaunchctl(["bootout", "gui/\(getUID())", PLIST_PATH])
     _ = runLaunchctl(["disable", "gui/\(getUID())/\(LABEL)"])
     
-    if let data = FileManager.default.contents(atPath: LOCKFILE),
-       let pidStr = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-       let pid = Int32(pidStr) {
+    if let pid = readDaemonPID() {
         kill(pid, SIGTERM)
         for _ in 0..<30 {
             if kill(pid, 0) != 0 { break }
