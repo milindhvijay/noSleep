@@ -202,13 +202,15 @@ func runDaemon() {
         exit(1)
     }
     
-    gPowerSource = IOPSNotificationCreateRunLoopSource({ _ in
+    guard let rawPowerSource = IOPSNotificationCreateRunLoopSource({ _ in
         handleStateChange()
-    }, nil).takeRetainedValue()
-
-    if let source = gPowerSource {
-        CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .defaultMode)
+    }, nil) else {
+        fputs("[ERROR] Failed to register power source notification -- cannot monitor AC/battery state\n", stderr)
+        cleanupAndExit()
+        exit(1)
     }
+    gPowerSource = rawPowerSource.takeRetainedValue()
+    CFRunLoopAddSource(CFRunLoopGetCurrent(), gPowerSource!, .defaultMode)
 
     gSetupComplete = true
     
