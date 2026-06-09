@@ -65,7 +65,7 @@ func notify(_ message: String, subtitle: String? = nil, sound: String = "Glass")
     posix_spawn_file_actions_addopen(&fileActions, STDERR_FILENO, "/dev/null", O_WRONLY, 0)
     defer { posix_spawn_file_actions_destroy(&fileActions) }
     
-    posix_spawn(&pid, "/usr/bin/osascript", &fileActions, nil, argv, nil)
+    posix_spawn(&pid, "/usr/bin/osascript", &fileActions, nil, argv, environ)
 }
 
 func notifyPreventing() {
