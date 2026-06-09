@@ -71,7 +71,11 @@ func cmdStart() {
     }
     print("[noSleep] Starting via launchctl")
     _ = runLaunchctl(["enable", "gui/\(getUID())/\(LABEL)"])
-    _ = runLaunchctl(["bootstrap", "gui/\(getUID())", PLIST_PATH])
+    let result = runLaunchctl(["bootstrap", "gui/\(getUID())", PLIST_PATH])
+    guard result == 0 else {
+        fputs("[ERROR] Failed to start daemon -- is the plist installed? Run install.sh\n", stderr)
+        exit(1)
+    }
     print("[noSleep] Started")
 }
 
