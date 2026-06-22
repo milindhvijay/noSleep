@@ -1,15 +1,23 @@
 // Utilities.swift
 
+import Darwin
 import Foundation
 
 @discardableResult
-func run(_ executable: String, _ args: String..., suppressStderr: Bool = false, timeout: TimeInterval = 5) -> (output: String, status: Int32) {
+func run(_ executable: String, _ args: String..., suppressStderr: Bool = false, captureOutput: Bool = true, timeout: TimeInterval = 5) -> (output: String, status: Int32) {
     let task = Process()
-    let pipe = Pipe()
     task.executableURL = URL(fileURLWithPath: executable)
     task.arguments = args
-    task.standardOutput = pipe
-    task.standardError = suppressStderr ? FileHandle.nullDevice : pipe
+    task.standardError = suppressStderr ? FileHandle.nullDevice : nil
+
+    var pipe: Pipe?
+    if captureOutput {
+        let p = Pipe()
+        task.standardOutput = p
+        pipe = p
+    } else {
+        task.standardOutput = FileHandle.nullDevice
+    }
 
     let semaphore = DispatchSemaphore(value: 0)
     task.terminationHandler = { _ in semaphore.signal() }
@@ -23,38 +31,87 @@ func run(_ executable: String, _ args: String..., suppressStderr: Bool = false, 
 
     if semaphore.wait(timeout: .now() + timeout) == .timedOut {
         task.terminate()
-        semaphore.wait()
+        if semaphore.wait(timeout: .now() + 1) == .timedOut {
+            return ("", -1)
+        }
+        return ("", -1)
     }
 
-    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-    return (String(data: data, encoding: .utf8) ?? "", task.terminationStatus)
-}
-
-func getUID() -> String {
-    return "\(getuid())"
-}
-
-// osascript because UNUserNotificationCenter requires bundled app
-func notify(_ message: String, subtitle: String? = nil, sound: String = "Glass") {
-    // Escape backslashes first, then quotes — these are AppleScript string-literal
-    // escapes, not shell escapes. run() handles argv safely, but the message is
-    // still interpolated into an AppleScript source string.
-    func escape(_ s: String) -> String {
-        s.replacingOccurrences(of: "\\", with: "\\\\")
-         .replacingOccurrences(of: "\"", with: "\\\"")
+    if let p = pipe {
+        let data = p.fileHandleForReading.readDataToEndOfFile()
+        return (String(data: data, encoding: .utf8) ?? "", task.terminationStatus)
     }
-    var script = "display notification \"\(escape(message))\" with title \"noSleep\""
-    if let sub = subtitle {
-        script += " subtitle \"\(escape(sub))\""
+    return ("", task.terminationStatus)
+}
+
+func processIsRunning(_ pid: Int32) -> Bool {
+    guard pid > 1 else { return false }
+    if kill(pid, 0) == 0 { return true }
+    return errno == EPERM
+}
+
+func isNoSleepProcess(_ pid: Int32) -> Bool {
+    var pathBuffer = [CChar](repeating: 0, count: 4096)
+    let pathLength = proc_pidpath(pid, &pathBuffer, UInt32(pathBuffer.count))
+    guard pathLength > 0 else { return false }
+
+    let processPath = String(cString: pathBuffer)
+    let processName = URL(fileURLWithPath: processPath).lastPathComponent
+    return processName == "noSleep"
+        || processName == "noSleepDaemon"
+        || processPath == "\(NSHomeDirectory())/bin/noSleep"
+        || processPath == DAEMON_PATH
+}
+
+private func checkedDaemonPID(from path: String) -> Int32? {
+    guard let pid = readLockPID(from: path),
+          processIsRunning(pid),
+          isNoSleepProcess(pid) else {
+        return nil
     }
-    script += " sound name \"\(escape(sound))\""
-    run("/usr/bin/osascript", "-e", script)
+
+    return pid
 }
 
-func notifyPreventing() {
-    notify("Sleep prevention active", subtitle: "AC Power + Lid Closed", sound: "Hero")
+func readDaemonPID() -> Int32? {
+    for path in [LOCKFILE, LEGACY_LOCKFILE] {
+        if let pid = checkedDaemonPID(from: path) {
+            return pid
+        }
+    }
+
+    return nil
 }
 
-func notifyRestored(reason: String) {
-    notify("Normal behaviour restored", subtitle: reason, sound: "Glass")
+func readDaemonLockFilePath() -> String? {
+    for path in [LOCKFILE, LEGACY_LOCKFILE] {
+        if checkedDaemonPID(from: path) != nil {
+            return path
+        }
+    }
+
+    return nil
+}
+
+@discardableResult
+func waitForProcessExit(_ pid: Int32, attempts: Int = 50) -> Bool {
+    for _ in 0..<attempts {
+        if !processIsRunning(pid) { return true }
+        usleep(100_000)
+    }
+
+    return !processIsRunning(pid)
+}
+
+func execInstalledDaemonOrRunFallback() {
+    if access(DAEMON_PATH, X_OK) == 0 {
+        let argv0 = strdup(DAEMON_PATH)
+        var argv: [UnsafeMutablePointer<CChar>?] = [argv0, nil]
+        execv(DAEMON_PATH, &argv)
+        free(argv0)
+        fputs("[ERROR] Unable to exec \(DAEMON_PATH): \(String(cString: strerror(errno)))\n", stderr)
+        exit(1)
+    }
+
+    runDaemon()
 }

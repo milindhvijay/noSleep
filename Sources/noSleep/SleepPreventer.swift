@@ -3,6 +3,9 @@
 import Foundation
 import IOKit.pwr_mgt
 
+private let sleepAssertionType = kIOPMAssertionTypePreventSystemSleep as CFString
+private let sleepAssertionName = "noSleep - lid closed on AC power" as CFString
+
 class SleepPreventer {
     private var assertionID: IOPMAssertionID = 0
     private(set) var isActive = false
@@ -10,9 +13,9 @@ class SleepPreventer {
     func preventSleep() {
         guard !isActive else { return }
         let result = IOPMAssertionCreateWithName(
-            kIOPMAssertionTypePreventSystemSleep as CFString,
+            sleepAssertionType,
             IOPMAssertionLevel(kIOPMAssertionLevelOn),
-            "noSleep - lid closed on AC power" as CFString,
+            sleepAssertionName,
             &assertionID
         )
         if result == kIOReturnSuccess {
