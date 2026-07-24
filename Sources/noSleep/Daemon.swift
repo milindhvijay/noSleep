@@ -9,21 +9,18 @@ private var gPreviousState: PowerState?
 private var gNotifyPort: IONotificationPortRef?
 private var gNotifierObject: io_object_t = 0
 private var gSetupComplete = false
+private var gDebounceTimer: CFRunLoopTimer?
+private var gPowerSource: CFRunLoopSource?
+
+private let debounceInterval: CFTimeInterval = 0.15
+private let debounceIdleInterval: CFTimeInterval = 60 * 60 * 24 * 365
 
 func shouldPreventSleep(_ state: PowerState) -> Bool {
     return state.isOnAC && state.isLidClosed
 }
 
-func handleStateChange() {
-    guard gSetupComplete else { return }
-    
-    // IOKit can fire rapid duplicate callbacks
-    struct Guard { static var processing = false }
-    guard !Guard.processing else { return }
-    Guard.processing = true
-    defer { Guard.processing = false }
-    
-    let current = getCurrentPowerState()
+func applyStateChange() {
+    let current = getCurrentPowerState(includeBattery: false)
     
     guard gPreviousState != nil else {
         gPreviousState = current
@@ -35,19 +32,21 @@ func handleStateChange() {
     
     if shouldPrevent && !wasActive {
         gSleepPreventer.preventSleep()
-        notifyPreventing()
     } else if !shouldPrevent && wasActive {
         gSleepPreventer.allowSleep()
-        if !current.isOnAC {
-            notifyRestored(reason: "Switched to battery")
-        } else if !current.isLidClosed {
-            notifyRestored(reason: "Lid opened")
-        } else {
-            notifyRestored(reason: "Ready to sleep")
-        }
     }
     
     gPreviousState = current
+}
+
+func handleStateChange() {
+    guard gSetupComplete else { return }
+
+    if let timer = gDebounceTimer {
+        CFRunLoopTimerSetNextFireDate(timer, CFAbsoluteTimeGetCurrent() + debounceInterval)
+    } else {
+        applyStateChange()
+    }
 }
 
 func clamshellCallback(refCon: UnsafeMutableRawPointer?, service: io_service_t, messageType: UInt32, messageArgument: UnsafeMutableRawPointer?) {
@@ -56,10 +55,9 @@ func clamshellCallback(refCon: UnsafeMutableRawPointer?, service: io_service_t, 
 }
 
 func setupClamshellNotification() -> Bool {
-    let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPMrootDomain"))
+    let service = getRootDomainService()
     guard service != 0 else { return false }
-    defer { IOObjectRelease(service) }
-    
+
     gNotifyPort = IONotificationPortCreate(kIOMainPortDefault)
     guard let notifyPort = gNotifyPort else { return false }
     
@@ -78,8 +76,40 @@ func setupClamshellNotification() -> Bool {
     return result == KERN_SUCCESS
 }
 
+func setupPowerSourceNotification() -> Bool {
+    let powerSource = IOPSNotificationCreateRunLoopSource({ _ in
+        handleStateChange()
+    }, nil).takeRetainedValue()
+
+    gPowerSource = powerSource
+    CFRunLoopAddSource(CFRunLoopGetCurrent(), powerSource, .defaultMode)
+    return true
+}
+
+func setupDebounceTimer() {
+    var ctx = CFRunLoopTimerContext()
+    gDebounceTimer = CFRunLoopTimerCreate(nil, CFAbsoluteTimeGetCurrent() + debounceIdleInterval, debounceIdleInterval, 0, 0, { timer, _ in
+        CFRunLoopTimerSetNextFireDate(timer, CFAbsoluteTimeGetCurrent() + debounceIdleInterval)
+        applyStateChange()
+    }, &ctx)
+
+    if let timer = gDebounceTimer {
+        CFRunLoopAddTimer(CFRunLoopGetCurrent(), timer, .defaultMode)
+    }
+}
+
 func cleanupAndExit() {
     gSleepPreventer.allowSleep()
+
+    if let timer = gDebounceTimer {
+        CFRunLoopTimerInvalidate(timer)
+        gDebounceTimer = nil
+    }
+
+    if let source = gPowerSource {
+        CFRunLoopSourceInvalidate(source)
+        gPowerSource = nil
+    }
     
     if gNotifierObject != 0 {
         IOObjectRelease(gNotifierObject)
@@ -89,7 +119,8 @@ func cleanupAndExit() {
         IONotificationPortDestroy(port)
         gNotifyPort = nil
     }
-    
+
+    releasePowerStateResources()
     releaseLock()
 }
 
@@ -107,22 +138,17 @@ func runDaemon() {
     }
     
     // Init state before callbacks to avoid race
-    let initialState = getCurrentPowerState()
+    let initialState = getCurrentPowerState(includeBattery: false)
     gPreviousState = initialState
-    
+
+    setupDebounceTimer()
     _ = setupClamshellNotification()
-    
+    _ = setupPowerSourceNotification()
+
     if shouldPreventSleep(initialState) {
         gSleepPreventer.preventSleep()
-        notifyPreventing()
     }
-    
-    let powerSource = IOPSNotificationCreateRunLoopSource({ _ in
-        handleStateChange()
-    }, nil).takeRetainedValue()
-    
-    CFRunLoopAddSource(CFRunLoopGetCurrent(), powerSource, .defaultMode)
-    
+
     gSetupComplete = true
     CFRunLoopRun()
     

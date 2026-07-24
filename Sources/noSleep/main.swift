@@ -7,11 +7,11 @@ func printHelp() {
     noSleep v\(VERSION) - Prevent macOS sleep when lid is closed on AC power
     
     USAGE:
-        noSleep              Run as daemon (foreground)
+        noSleep              Show this help message
         noSleep status       Show current power/lid/daemon state
         noSleep start        Start daemon via launchd (auto-start on login)
         noSleep stop         Stop daemon (keeps files for restart)
-        noSleep daemon       Run as daemon (foreground)
+        noSleep daemon       Run installed daemon executable (foreground)
         noSleep restart      Stop and start daemon
         noSleep doctor       Run diagnostics (read-only)
         noSleep uninstall    Stop daemon and remove all installed files
@@ -37,7 +37,7 @@ switch cmd {
 case "status":              cmdStatus()
 case "start":               cmdStart()
 case "stop":                cmdStop()
-case "daemon":              runDaemon()
+case "daemon":              execInstalledDaemonOrRunFallback()
 case "restart":             cmdRestart()
 case "doctor":              cmdDoctor()
 case "uninstall":           cmdUninstall()
