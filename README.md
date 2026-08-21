@@ -1,110 +1,81 @@
 # noSleep
 
-noSleep is a small macOS utility that keeps a Mac awake when the lid is closed
-and AC power is connected.
-
-The current build separates the human-facing CLI from the long-running daemon:
-
-- `noSleep`: Swift CLI for install-time and user commands.
-- `noSleepDaemon`: minimal C daemon run by `launchd`.
-
-This keeps the always-running process small while preserving the original user
-commands and behavior.
+A small macOS utility that keeps your Mac awake while the lid is closed and AC
+power is connected. On battery, or with the lid open, macOS sleep behavior is
+left alone.
 
 ## Behavior
 
-| State | Result |
-| --- | --- |
-| AC power connected and lid closed | Prevent system sleep |
-| AC power connected and lid open | Allow normal macOS behavior |
-| Battery power | Allow normal macOS behavior |
+| Power | Lid | Result |
+| --- | --- | --- |
+| AC | Closed | Sleep prevented |
+| AC | Open | macOS default |
+| Battery | Any | macOS default |
 
-Closing the lid posts a "Sleep prevention active" notification. Opening the lid
-or switching out of the protected state posts a restore notification and plays a
-single restore sound. The lid-close sound is intentionally suppressed because
-macOS can defer audio during clamshell transitions and replay it on lid-open.
+A notification is posted when sleep prevention starts and when normal behavior
+is restored.
 
 ## Requirements
 
 - macOS
 - Xcode Command Line Tools
-- `swiftc`
-- `clang`
-- `launchctl`
-
-Install Xcode Command Line Tools if needed:
 
 ```sh
 xcode-select --install
 ```
 
-## Install
+## Installation
 
 ```sh
 ./install.sh
 noSleep start
 ```
 
-The installer:
-
-- builds the Swift CLI as `~/bin/noSleep`
-- builds the minimal daemon as `~/bin/noSleepDaemon`
-- creates `~/Library/Application Support/noSleep`
-- installs `~/Library/LaunchAgents/com.noSleep.daemon.plist`
-- points launchd stdout and stderr at `/dev/null`
-- validates the generated plist with `plutil -lint`
-
-The installer intentionally leaves the local `./noSleep` build artifact in the
-repository directory.
-
-## Commands
+The installer builds `noSleep` and `noSleepDaemon` into `~/bin` and installs a
+launch agent at `~/Library/LaunchAgents/com.noSleep.daemon.plist`, so the daemon
+starts at login. If `~/bin` is not on your `PATH`, add it to your `~/.zshrc`:
 
 ```sh
-noSleep              # Show help
-noSleep status       # Show power, lid, daemon, and launchd state
-noSleep start        # Start the daemon via launchd
-noSleep stop         # Stop the daemon but keep installed files
-noSleep restart      # Restart the daemon via launchd
-noSleep doctor       # Run read-only diagnostics
-noSleep daemon       # Exec the installed daemon, or run Swift fallback
-noSleep uninstall    # Stop and remove installed files
-noSleep --version    # Show version
-noSleep --help       # Show help
+export PATH="$HOME/bin:$PATH"
 ```
 
-## Runtime Footprint
+To upgrade, re-run `./install.sh`. A running daemon is restarted automatically.
 
-The daemon is event-driven. It does not poll. It listens for IOKit clamshell and
-power-source notifications, then creates or releases one
-`PreventSystemSleep` assertion.
+## Usage
 
-Expected idle shape after startup:
-
-- one daemon thread
-- no stdout/stderr log files
-- one lock-file descriptor
-- no polling loop
-- no permanent notification worker thread
-
-Typical open-file view:
-
-```text
-/
-~/bin/noSleepDaemon
-/usr/lib/dyld
-~/Library/Application Support/noSleep/noSleep.lock
+```
+noSleep status       Show power, lid, and daemon state
+noSleep start        Start the daemon via launchd
+noSleep stop         Stop the daemon
+noSleep restart      Restart the daemon
+noSleep daemon       Run the daemon in the foreground
+noSleep doctor       Print diagnostics (read-only)
+noSleep uninstall    Stop the daemon and remove all installed files
+noSleep --help       Show help
+noSleep --version    Show version
 ```
 
-Activity Monitor and `lsof` also report mapped runtime objects such as the
-executable and `dyld`; those are not files created by noSleep.
+## How it works
 
-macOS may still report page faults or page-ins for first access to executable
-or shared library pages. noSleep cannot force those counters to zero, but the
-daemon is structured to avoid idle churn.
+noSleep ships two binaries. `noSleep` is a Swift CLI for install-time and
+lifecycle commands. `noSleepDaemon` is a minimal C daemon run by launchd, which
+keeps the always-running process small.
 
-## Installed Files
+The daemon is event-driven and does not poll. It watches IOKit clamshell
+(`AppleClamshellState`) and power-source notifications, and holds exactly one
+`kIOPMAssertionTypePreventSystemSleep` assertion while the lid is closed on AC
+power — the assertion type that survives a clamshell close. At idle it is one
+thread with one open file descriptor, its lock file, and it writes no logs.
 
-Current install:
+A single instance is enforced with an `flock` on
+`~/Library/Application Support/noSleep/noSleep.lock`. The PID in that file is
+validated with `proc_pidpath` before it is reported or signaled, so a recycled
+PID is never mistaken for a running daemon.
+
+See [DESIGN.md](DESIGN.md) for the full technical notes, including the locking
+and security model, signal handling, and build hardening.
+
+## Installed files
 
 ```text
 ~/bin/noSleep
@@ -113,61 +84,45 @@ Current install:
 ~/Library/Application Support/noSleep/noSleep.lock
 ```
 
-Legacy cleanup support:
+The state directory is created mode `0700` and the lock file mode `0600`. The
+launch agent directs stdout and stderr to `/dev/null`; noSleep creates no log
+files.
 
-```text
-/tmp/noSleep.lock
-/tmp/noSleep.log
-/tmp/noSleep.err
-~/Library/Logs/noSleep
+## Uninstall
+
+```sh
+noSleep uninstall
 ```
 
-`noSleep uninstall` removes the installed binaries, launchd plist, lock file,
-state directory, and legacy cleanup paths when they are owned by the current
-user and safe to remove.
-
-## Design Notes
-
-The original Swift-only daemon was simple and readable, but the long-running
-process also carried CLI helpers, Foundation process-spawning utilities, and
-notification code. The current design keeps that code in the CLI path and runs
-a smaller dedicated daemon under launchd.
-
-Security and correctness hardening includes:
-
-- state directory under `~/Library/Application Support/noSleep`
-- lock file created with `O_NOFOLLOW`, `O_CLOEXEC`, and mode `0600`
-- lock-file owner, type, and hardlink validation
-- full-write PID update with `fsync`
-- PID validation through `proc_pidpath`
-- direct `Process` usage in Swift instead of shell strings
-- direct `posix_spawn` in the daemon for notifications and sounds
-- strict C compiler warnings promoted to errors
-- `clang --analyze` clean daemon source
+This removes the binaries, launch agent, lock file, and state directory, along
+with legacy `/tmp/noSleep.*` and `~/Library/Logs/noSleep` paths from older
+versions. Each removal checks ownership and file type first — only paths owned
+by the current user are touched — and prints what it removed.
 
 ## Troubleshooting
 
-Check current state:
+Start with the two read-only commands. `status` reports power, lid, daemon, and
+launchd state; `doctor` adds the plist, binary, and lock file it found.
 
 ```sh
 noSleep status
 noSleep doctor
 ```
 
-Restart the daemon:
+**`noSleep: command not found`** — `~/bin` is not on your `PATH`. See
+[Installation](#installation).
+
+**`Daemon: NOT running` or `launchd: NOT loaded`** — run `noSleep start`. If
+that fails with `Failed to start daemon`, the launch agent is missing or
+invalid; re-run `./install.sh`.
+
+**The Mac still sleeps with the lid closed on AC** — confirm `noSleep status`
+reports both `Power: AC` and `Lid: Closed`. If it does and the daemon is
+running, restart it to re-create the assertion:
 
 ```sh
 noSleep restart
 ```
-
-Fully remove the install:
-
-```sh
-noSleep uninstall
-```
-
-If the daemon is running but the current shell cannot find `noSleep`, make sure
-`~/bin` is in your `PATH`.
 
 ## License
 
